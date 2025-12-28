@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body {
+      width: 250px;
+      padding: 15px;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: #111;
+      color: white;
+    }
+    .container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 15px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 1.2rem;
+      color: #ff4d4d;
+    }
+    .status {
+      font-size: 0.9rem;
+    }
+    .toggle-btn {
+      width: 100%;
+      padding: 10px;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      font-weight: bold;
+      transition: background 0.3s;
+    }
+    .btn-on {
+      background-color: #28a745;
+      color: white;
+    }
+    .btn-off {
+      background-color: #dc3545;
+      color: white;
+    }
+    .instructions {
+      font-size: 0.8rem;
+      color: #aaa;
+      text-align: left;
+      width: 100%;
+    }
+    ul {
+      padding-left: 20px;
+      margin: 5px 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>FingerPoint</h1>
+    <div class="status">Status: <span id="status-text">Disabled</span></div>
+    <button id="toggle-btn" class="toggle-btn btn-off">Enable Control</button>
+    <div class="instructions">
+      <strong>Gestures:</strong>
+      <ul>
+        <li>Index: Move Cursor</li>
+        <li>Pinch: Click</li>
+        <li>Hold Pinch: Menu</li>
+        <li>2 Fingers Up: Scroll</li>
+      </ul>
+    </div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
