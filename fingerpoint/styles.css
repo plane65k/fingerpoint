@@ -1,0 +1,93 @@
+/* Cursor */
+#fp-cursor {
+  width: 15px;
+  height: 15px;
+  background-color: red;
+  border-radius: 50%;
+  position: fixed;
+  pointer-events: none;
+  z-index: 10005;
+  transition: transform 0.1s ease-out;
+  display: none;
+}
+
+/* Log Container */
+#fp-log-container {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  width: 250px;
+  max-height: 200px;
+  background: rgba(17, 17, 17, 0.8);
+  color: #00ff00;
+  font-family: monospace;
+  font-size: 12px;
+  padding: 10px;
+  border-radius: 5px;
+  overflow-y: auto;
+  z-index: 10004;
+  pointer-events: none;
+  display: none;
+}
+
+/* Hold Menu */
+#fp-hold-menu {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 300px;
+  background: #111;
+  color: white;
+  padding: 20px;
+  border-radius: 10px;
+  box-shadow: 0 0 20px rgba(0,0,0,0.5);
+  z-index: 10006;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+}
+
+#fp-hold-menu h2 {
+  margin-top: 0;
+}
+
+#fp-hold-menu .menu-buttons {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+}
+
+#fp-hold-menu button {
+  flex: 1;
+  padding: 10px;
+  background: #333;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+#fp-hold-menu button:hover {
+  background: #444;
+}
+
+#fp-hold-menu .close-btn {
+  background: #c00;
+}
+
+#fp-hold-menu .close-btn:hover {
+  background: #e00;
+}
+
+/* Hand Overlay Canvas */
+#fp-canvas {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 10003;
+  display: none;
+}
