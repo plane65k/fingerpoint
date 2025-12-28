@@ -5,6 +5,10 @@ export class GestureController {
     this.onGesture = null;
     this.enabled = false;
     this.isRunning = false;
+    this.cameraStream = null;
+    this.permissionState = 'prompt'; // 'prompt', 'granted', 'denied'
+    this.lastFrameTime = 0;
+    this.frameInterval = 1000 / 30; // ~30 FPS
 
     this.TOUCH_RADIUS = 0.03;
     this.CLICK_COOLDOWN = 800;
@@ -17,6 +21,49 @@ export class GestureController {
 
     this.lastPalmY = null;
     this.isScrolling = false;
+  }
+
+  async requestCameraPermission() {
+    console.log('🎥 Camera request started');
+    this.permissionState = 'prompt';
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: 640, height: 480 }
+      });
+      
+      this.cameraStream = stream;
+      this.permissionState = 'granted';
+      console.log('✅ Camera permission granted');
+      
+      // Store permission state in chrome.storage.local
+      await new Promise((resolve) => {
+        chrome.storage.local.set({ cameraPermission: 'granted' }, resolve);
+      });
+      
+      return { success: true, stream };
+    } catch (err) {
+      console.error(`❌ Camera permission denied: ${err.name}`);
+      this.permissionState = 'denied';
+      
+      // Store permission state in chrome.storage.local
+      await new Promise((resolve) => {
+        chrome.storage.local.set({ cameraPermission: 'denied' }, resolve);
+      });
+
+      // Handle specific error types
+      let errorMessage = 'Camera access denied';
+      if (err.name === 'NotFoundError') {
+        errorMessage = 'No camera found';
+      } else if (err.name === 'NotReadableError') {
+        errorMessage = 'Camera in use by another app';
+      } else if (err.name === 'NotAllowedError') {
+        errorMessage = 'Camera permission denied by user';
+      }
+      
+      console.error(`🎥 ${errorMessage}: ${err.message}`);
+      return { success: false, error: errorMessage, name: err.name };
+    }
   }
 
   async init() {
@@ -39,38 +86,95 @@ export class GestureController {
 
     this.hands.onResults(this.handleResults.bind(this));
 
+    // Create hidden video element for camera stream
     this.video = document.createElement('video');
     this.video.style.display = 'none';
+    this.video.muted = true;
+    this.video.playsInline = true;
     document.body.appendChild(this.video);
+
+    // Load saved permission state
+    await new Promise((resolve) => {
+      chrome.storage.local.get(['cameraPermission'], (result) => {
+        if (result.cameraPermission) {
+          this.permissionState = result.cameraPermission;
+        }
+        resolve();
+      });
+    });
   }
 
   async start() {
     if (this.isRunning) return;
+
+    // Check if we have permission
+    if (this.permissionState !== 'granted') {
+      const permResult = await this.requestCameraPermission();
+      if (!permResult.success) {
+        throw new Error(permResult.error);
+      }
+    }
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      this.video.srcObject = stream;
-      this.video.play();
+      // Use stored stream or get new one
+      if (!this.cameraStream) {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: 640, height: 480 }
+        });
+        this.cameraStream = stream;
+      }
+
+      this.video.srcObject = this.cameraStream;
+      await this.video.play();
       this.isRunning = true;
       
-      const processVideo = async () => {
-        if (!this.isRunning) return;
-        if (this.enabled && this.video.readyState >= 2) {
-          await this.hands.send({ image: this.video });
-        }
-        requestAnimationFrame(processVideo);
-      };
-      requestAnimationFrame(processVideo);
       console.log('🚀 GestureController started');
+      
+      // Start continuous frame processing loop
+      this.processVideoFrame();
     } catch (err) {
       console.error('❌ Failed to get webcam access', err);
+      this.permissionState = 'denied';
+      await new Promise((resolve) => {
+        chrome.storage.local.set({ cameraPermission: 'denied' }, resolve);
+      });
+      throw err;
     }
+  }
+
+  async processVideoFrame() {
+    if (!this.isRunning) return;
+
+    const now = Date.now();
+    const elapsed = now - this.lastFrameTime;
+
+    // Process frame if enough time has passed (~30 FPS)
+    if (elapsed >= this.frameInterval) {
+      this.lastFrameTime = now;
+      
+      if (this.enabled && this.video.readyState >= 2) {
+        console.log('🎥 Sending frame to MediaPipe');
+        await this.hands.send({ image: this.video });
+      }
+    }
+
+    requestAnimationFrame(() => this.processVideoFrame());
   }
 
   stop() {
     this.isRunning = false;
-    if (this.video && this.video.srcObject) {
-      this.video.srcObject.getTracks().forEach(track => track.stop());
+    
+    // Stop camera stream
+    if (this.cameraStream) {
+      this.cameraStream.getTracks().forEach(track => track.stop());
+      this.cameraStream = null;
     }
+    
+    // Clear video srcObject
+    if (this.video && this.video.srcObject) {
+      this.video.srcObject = null;
+    }
+    
     console.log('🛑 GestureController stopped');
   }
 
@@ -81,7 +185,7 @@ export class GestureController {
 
   disable() {
     this.enabled = false;
-    console.log('index.js ❌ GestureController disabled');
+    console.log('❌ GestureController disabled');
   }
 
   handleResults(results) {
@@ -91,6 +195,7 @@ export class GestureController {
       this.pinchStartTime = null;
       this.isScrolling = false;
       this.lastPalmY = null;
+      console.log('❌ Hand lost');
       return;
     }
 
@@ -110,6 +215,9 @@ export class GestureController {
     const palm = landmarks[0];
     const indexMCP = landmarks[5];
     const middleMCP = landmarks[9];
+
+    // Log hand detection with key landmarks
+    console.log(`🤚 Hand detected! Index: (${indexTip.x.toFixed(3)}, ${indexTip.y.toFixed(3)}), Thumb: (${thumbTip.x.toFixed(3)}, ${thumbTip.y.toFixed(3)}), Palm: (${palm.x.toFixed(3)}, ${palm.y.toFixed(3)})`);
 
     // 1. Index Finger Cursor Tracking
     // Mirror X-axis
@@ -156,6 +264,7 @@ export class GestureController {
               this.onGesture({ type: 'click', x: cursorX, y: cursorY });
             }
             this.lastClickTime = now;
+            console.log('🎯 Gesture: pinch click');
           }
         }
         this.isPinching = false;
@@ -181,6 +290,7 @@ export class GestureController {
             this.onGesture({ type: 'scroll', dy: deltaY });
           }
           this.lastPalmY = palm.y;
+          console.log('🎯 Gesture: scroll');
         }
       }
     } else {
@@ -194,5 +304,17 @@ export class GestureController {
     const dTip = Math.sqrt(Math.pow(tip.x - palm.x, 2) + Math.pow(tip.y - palm.y, 2));
     const dMCP = Math.sqrt(Math.pow(mcp.x - palm.x, 2) + Math.pow(mcp.y - palm.y, 2));
     return dTip > dMCP * 1.2; // Threshold to consider it straight
+  }
+
+  getPermissionState() {
+    return this.permissionState;
+  }
+
+  async requestPermissionAgain() {
+    this.permissionState = 'prompt';
+    await new Promise((resolve) => {
+      chrome.storage.local.set({ cameraPermission: 'prompt' }, resolve);
+    });
+    return this.requestCameraPermission();
   }
 }

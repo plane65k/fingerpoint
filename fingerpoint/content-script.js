@@ -11,13 +11,15 @@
 
   const state = {
     enabled: false,
-    debug: true
+    debug: true,
+    cameraRequired: false
   };
 
   let controller = new GestureController();
   let cursorEl = null;
   let logEl = null;
   let menuEl = null;
+  let cameraBannerEl = null;
 
   function initUI() {
     // Cursor
@@ -49,6 +51,32 @@
       state.debug = !state.debug;
       logEl.style.display = (state.enabled && state.debug) ? 'block' : 'none';
       log(`🐞 Debug logs: ${state.debug ? 'ON' : 'OFF'}`);
+    };
+
+    // Camera permission banner
+    cameraBannerEl = document.createElement('div');
+    cameraBannerEl.id = 'fp-camera-banner';
+    cameraBannerEl.innerHTML = `
+      <span>📷 Camera Permission Required</span>
+      <button id="fp-request-permission">Request Permission</button>
+    `;
+    cameraBannerEl.style.display = 'none';
+    document.body.appendChild(cameraBannerEl);
+
+    document.getElementById('fp-request-permission').onclick = async () => {
+      const result = await controller.requestPermissionAgain();
+      if (result.success) {
+        cameraBannerEl.style.display = 'none';
+        log('✅ Camera permission granted');
+        // Restart if enabled
+        if (state.enabled) {
+          await controller.init();
+          await controller.start();
+          controller.enable();
+        }
+      } else {
+        log(`❌ ${result.error}`);
+      }
     };
 
     // Make menu draggable
@@ -97,7 +125,7 @@
   function simulateClick(x, y) {
     const px = x * window.innerWidth;
     const py = y * window.innerHeight;
-    const el = document.elementFromPoint(px, py);
+    const el = elementFromPoint(px, py);
     if (el) {
       log(`🖱️ Clicking on: ${el.tagName}`);
       const opts = {
@@ -145,18 +173,47 @@
   async function toggle(enabled) {
     state.enabled = enabled;
     if (enabled) {
-      await controller.init();
-      await controller.start();
-      controller.enable();
-      cursorEl.style.display = 'block';
-      if (state.debug) logEl.style.display = 'block';
-      log('🟢 Control Enabled');
+      try {
+        // Request camera permission before starting
+        log('🎥 Requesting camera permission...');
+        await controller.init();
+        
+        const permResult = await controller.requestCameraPermission();
+        
+        if (!permResult.success) {
+          // Show camera banner for user action
+          if (cameraBannerEl) {
+            cameraBannerEl.style.display = 'flex';
+          }
+          log(`❌ ${permResult.error}`);
+          state.enabled = false;
+          
+          // Update popup status
+          chrome.runtime.sendMessage({ action: 'cameraError', error: permResult.error });
+          return;
+        }
+        
+        await controller.start();
+        controller.enable();
+        cursorEl.style.display = 'block';
+        if (state.debug) logEl.style.display = 'block';
+        log('🟢 Control Enabled');
+        
+        // Notify popup that camera is connected
+        chrome.runtime.sendMessage({ action: 'cameraConnected' });
+      } catch (err) {
+        console.error('❌ Failed to start gesture control:', err);
+        log(`❌ ${err.message}`);
+        state.enabled = false;
+        chrome.runtime.sendMessage({ action: 'cameraError', error: err.message });
+      }
     } else {
       controller.disable();
       controller.stop();
       if (cursorEl) cursorEl.style.display = 'none';
       if (logEl) logEl.style.display = 'none';
       if (menuEl) menuEl.style.display = 'none';
+      if (cameraBannerEl) cameraBannerEl.style.display = 'none';
       log('🔴 Control Disabled');
     }
   }
@@ -167,7 +224,15 @@
       toggle(request.enabled);
       sendResponse({ status: 'ok' });
     } else if (request.action === 'getStatus') {
-      sendResponse({ enabled: state.enabled });
+      sendResponse({ 
+        enabled: state.enabled,
+        cameraStatus: controller.getPermissionState()
+      });
+    } else if (request.action === 'requestCamera') {
+      controller.requestCameraPermission().then(result => {
+        sendResponse(result);
+      });
+      return true; // Keep channel open for async response
     }
   });
 
