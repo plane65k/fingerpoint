@@ -7,8 +7,7 @@
     "activeTab",
     "scripting",
     "storage",
-    "tabs",
-    "webRequest"
+    "tabs"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -24,7 +23,8 @@
     {
       "matches": ["<all_urls>"],
       "js": ["hands.js", "content-script.js"],
-      "css": ["styles.css"]
+      "css": ["styles.css"],
+      "run_at": "document_start"
     }
   ],
   "web_accessible_resources": [

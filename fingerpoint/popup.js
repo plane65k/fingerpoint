@@ -6,117 +6,107 @@ document.addEventListener('DOMContentLoaded', async () => {
   const cameraStatusText = document.getElementById('camera-status-text');
   const errorContainer = document.getElementById('error-container');
 
+  const getSync = (keys) => new Promise((resolve) => chrome.storage.sync.get(keys, resolve));
+  const setSync = (obj) => new Promise((resolve) => chrome.storage.sync.set(obj, resolve));
+  const getLocal = (keys) => new Promise((resolve) => chrome.storage.local.get(keys, resolve));
+  const setLocal = (obj) => new Promise((resolve) => chrome.storage.local.set(obj, resolve));
+
+  const queryTabs = (query) => new Promise((resolve) => chrome.tabs.query(query, resolve));
+
+  const sendMessageToTab = (tabId, message) =>
+    new Promise((resolve, reject) => {
+      chrome.tabs.sendMessage(tabId, message, (response) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        resolve(response);
+      });
+    });
+
   // Load current state
-  chrome.storage.sync.get(['enabled'], async (result) => {
-    const enabled = result.enabled || false;
-    await updateCameraStatus();
-    updateUI(enabled);
-  });
+  const { enabled = false } = await getSync(['enabled']);
+  await updateCameraStatus();
+  updateUI(enabled);
 
   // Listen for camera status updates from content script
   chrome.runtime.onMessage.addListener((request) => {
     if (request.action === 'cameraConnected') {
       updateCameraStatusUI('connected');
+      clearError();
     } else if (request.action === 'cameraError') {
       showError(request.error);
       updateCameraStatusUI('denied');
-      // Disable control if camera fails
-      chrome.storage.sync.set({ enabled: false });
-      updateUI(false);
+
+      setSync({ enabled: false }).then(() => {
+        updateUI(false);
+      });
     }
   });
 
   toggleBtn.onclick = async () => {
-    chrome.storage.sync.get(['enabled'], async (result) => {
-      const newState = !result.enabled;
-      
-      if (newState) {
-        // When enabling, request camera permission first
-        console.log('🎥 Requesting camera permission from popup...');
-        updateCameraStatusUI('pending');
-        cameraStatusText.textContent = 'Camera: Requesting...';
-        
-        try {
-          const permResult = await requestCameraPermission();
-          
-          if (permResult.success) {
-            // Permission granted, enable control
-            chrome.storage.sync.set({ enabled: true }, () => {
-              updateUI(true);
-              sendMessageToTabs(true);
-            });
-          } else {
-            // Permission denied
-            updateCameraStatusUI('denied');
-            cameraStatusText.textContent = `Camera: ${permResult.error}`;
-            showError(permResult.error);
-            
-            // Add retry button if permission was denied
-            if (permResult.name === 'NotAllowedError') {
-              addRetryButton();
-            }
-          }
-        } catch (err) {
-          console.error('❌ Camera permission error:', err);
-          updateCameraStatusUI('denied');
-          cameraStatusText.textContent = `Camera: ${err.message}`;
-          showError(err.message);
+    const result = await getSync(['enabled']);
+    const newState = !result.enabled;
+
+    clearError();
+
+    if (newState) {
+      console.log('🎥 User clicked Enable Control');
+      updateCameraStatusUI('pending');
+      cameraStatusText.textContent = 'Camera: Requesting...';
+
+      try {
+        const [tab] = await queryTabs({ active: true, currentWindow: true });
+        if (!tab?.id) {
+          throw new Error('No active tab found');
         }
-      } else {
-        // Disable control
-        chrome.storage.sync.set({ enabled: false }, () => {
+
+        console.log('🎥 Sending requestCamera message to tab', tab.id);
+
+        const permResult = await sendMessageToTab(tab.id, { action: 'requestCamera' });
+
+        if (permResult?.success) {
+          console.log('✅ Camera granted, enabling gestures');
+
+          await setSync({ enabled: true });
+          updateUI(true);
+          updateCameraStatusUI('connected');
+          sendToggleToTabs(true);
+        } else {
+          const message = permResult?.message || 'Camera permission denied or unavailable';
+          console.error('❌ Camera permission denied or error:', message);
+
+          updateCameraStatusUI('denied');
+          cameraStatusText.textContent = `Camera: ${message}`;
+          showError(message);
+
+          if (permResult?.errorType === 'NotAllowedError') {
+            addRetryButton();
+          }
+
+          await setSync({ enabled: false });
           updateUI(false);
-          sendMessageToTabs(false);
-        });
+        }
+      } catch (err) {
+        console.error('❌ Camera permission request failed:', err);
+
+        updateCameraStatusUI('denied');
+        cameraStatusText.textContent = `Camera: ${err.message}`;
+        showError(err.message);
+
+        await setSync({ enabled: false });
+        updateUI(false);
       }
-    });
+    } else {
+      await setSync({ enabled: false });
+      updateUI(false);
+      sendToggleToTabs(false);
+    }
   };
 
-  async function requestCameraPermission() {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 640, height: 480 }
-      });
-      
-      // Stop the test stream since content script will create its own
-      stream.getTracks().forEach(track => track.stop());
-      
-      // Store permission state
-      await new Promise((resolve) => {
-        chrome.storage.local.set({ cameraPermission: 'granted' }, resolve);
-      });
-      
-      console.log('✅ Camera permission granted');
-      return { success: true };
-    } catch (err) {
-      console.error(`❌ Camera permission denied: ${err.name}`);
-      
-      // Store permission state
-      await new Promise((resolve) => {
-        chrome.storage.local.set({ cameraPermission: 'denied' }, resolve);
-      });
-
-      // Handle specific error types
-      let errorMessage = 'Camera access denied';
-      if (err.name === 'NotFoundError') {
-        errorMessage = 'No camera found';
-      } else if (err.name === 'NotReadableError') {
-        errorMessage = 'Camera in use by another app';
-      } else if (err.name === 'NotAllowedError') {
-        errorMessage = 'Permission denied by user';
-      }
-      
-      console.error(`🎥 ${errorMessage}: ${err.message}`);
-      return { success: false, error: errorMessage, name: err.name };
-    }
-  }
-
   async function updateCameraStatus() {
-    // Check stored permission state
-    const result = await new Promise((resolve) => {
-      chrome.storage.local.get(['cameraPermission'], resolve);
-    });
-    
+    const result = await getLocal(['cameraPermission']);
+
     if (result.cameraPermission) {
       updateCameraStatusUI(result.cameraPermission);
     } else {
@@ -127,10 +117,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   function updateCameraStatusUI(state) {
     cameraStatus.className = 'camera-status ' + state;
     const indicator = cameraStatus.querySelector('.status-indicator');
-    
-    // Remove all status classes
-    indicator.classList.remove('status-connected', 'status-disconnected', 'status-pending', 'status-denied');
-    
+
+    indicator.classList.remove(
+      'status-connected',
+      'status-disconnected',
+      'status-pending',
+      'status-denied'
+    );
+
     switch (state) {
       case 'granted':
       case 'connected':
@@ -156,6 +150,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     errorContainer.innerHTML = `<div class="error-message">${message}</div>`;
   }
 
+  function clearError() {
+    errorContainer.innerHTML = '';
+  }
+
   function addRetryButton() {
     const btn = document.createElement('button');
     btn.className = 'permission-btn';
@@ -168,17 +166,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   async function resetPermissionAndRetry() {
-    // Reset stored permission to prompt
-    await new Promise((resolve) => {
-      chrome.storage.local.set({ cameraPermission: 'prompt' }, resolve);
-    });
-    
-    // Click toggle again to retry
+    await setLocal({ cameraPermission: 'prompt' });
     toggleBtn.click();
   }
 
-  function updateUI(enabled) {
-    if (enabled) {
+  function updateUI(isEnabled) {
+    if (isEnabled) {
       statusText.textContent = 'Enabled';
       statusText.style.color = '#28a745';
       statusIndicator.className = 'status-indicator status-connected';
@@ -193,12 +186,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  function sendMessageToTabs(enabled) {
+  function sendToggleToTabs(isEnabled) {
     chrome.tabs.query({}, (tabs) => {
-      tabs.forEach(tab => {
-        chrome.tabs.sendMessage(tab.id, { action: 'toggle', enabled }).catch(err => {
-          // Tab might not have content script injected yet or is restricted
-          console.log(`Could not send message to tab ${tab.id}: ${err.message}`);
+      tabs.forEach((tab) => {
+        chrome.tabs.sendMessage(tab.id, { action: 'toggle', enabled: isEnabled }, () => {
+          // Ignore tabs that can't receive messages (chrome://, webstore, etc.)
+          if (chrome.runtime.lastError) return;
         });
       });
     });
