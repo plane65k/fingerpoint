@@ -1,3 +1,58 @@
+// Listen for camera request from popup
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action !== 'requestCamera') return;
+
+  console.log('🎥 Content script received requestCamera message');
+
+  if (!navigator.mediaDevices?.getUserMedia) {
+    const message = 'getUserMedia is not available in this context';
+    console.error('❌ 🎥 Camera permission error:', message);
+
+    chrome.storage.local.set({ cameraPermission: 'denied' }, () => {
+      sendResponse({ success: false, message, errorType: 'NotSupportedError' });
+    });
+
+    return true;
+  }
+
+  console.log('🎥 Calling getUserMedia()');
+
+  navigator.mediaDevices
+    .getUserMedia({
+      video: {
+        width: { ideal: 640 },
+        height: { ideal: 480 }
+      },
+      audio: false
+    })
+    .then((stream) => {
+      console.log('✅ Camera permission GRANTED');
+      stream.getTracks().forEach((track) => track.stop());
+
+      chrome.storage.local.set({ cameraPermission: 'granted' }, () => {
+        sendResponse({ success: true, message: 'Camera permission granted' });
+      });
+    })
+    .catch((error) => {
+      console.error('❌ Camera permission error:', error.name, error.message);
+
+      let message = 'Camera access denied';
+      if (error.name === 'NotFoundError') {
+        message = 'No camera found';
+      } else if (error.name === 'NotReadableError') {
+        message = 'Camera in use by another app';
+      } else if (error.name === 'NotAllowedError') {
+        message = 'Permission denied by user';
+      }
+
+      chrome.storage.local.set({ cameraPermission: 'denied' }, () => {
+        sendResponse({ success: false, message, errorType: error.name });
+      });
+    });
+
+  return true;
+});
+
 (async () => {
   const GESTURE_CONTROLLER_URL = chrome.runtime.getURL('gesture-controller.js');
   let GestureController;
@@ -11,28 +66,41 @@
 
   const state = {
     enabled: false,
-    debug: true,
-    cameraRequired: false
+    debug: true
   };
 
-  let controller = new GestureController();
+  const controller = new GestureController();
+  let controllerInitialized = false;
+
   let cursorEl = null;
   let logEl = null;
   let menuEl = null;
   let cameraBannerEl = null;
 
+  async function waitForBody() {
+    if (document.body) return;
+
+    await new Promise((resolve) => {
+      const observer = new MutationObserver(() => {
+        if (document.body) {
+          observer.disconnect();
+          resolve();
+        }
+      });
+
+      observer.observe(document.documentElement, { childList: true, subtree: true });
+    });
+  }
+
   function initUI() {
-    // Cursor
     cursorEl = document.createElement('div');
     cursorEl.id = 'fp-cursor';
     document.body.appendChild(cursorEl);
 
-    // Logs
     logEl = document.createElement('div');
     logEl.id = 'fp-log-container';
     document.body.appendChild(logEl);
 
-    // Hold Menu
     menuEl = document.createElement('div');
     menuEl.id = 'fp-hold-menu';
     menuEl.innerHTML = `
@@ -49,11 +117,10 @@
     };
     document.getElementById('fp-settings-toggle').onclick = () => {
       state.debug = !state.debug;
-      logEl.style.display = (state.enabled && state.debug) ? 'block' : 'none';
+      logEl.style.display = state.enabled && state.debug ? 'block' : 'none';
       log(`🐞 Debug logs: ${state.debug ? 'ON' : 'OFF'}`);
     };
 
-    // Camera permission banner
     cameraBannerEl = document.createElement('div');
     cameraBannerEl.id = 'fp-camera-banner';
     cameraBannerEl.innerHTML = `
@@ -64,22 +131,21 @@
     document.body.appendChild(cameraBannerEl);
 
     document.getElementById('fp-request-permission').onclick = async () => {
+      console.log('🎥 User clicked Request Permission banner');
+
       const result = await controller.requestPermissionAgain();
       if (result.success) {
         cameraBannerEl.style.display = 'none';
         log('✅ Camera permission granted');
-        // Restart if enabled
+
         if (state.enabled) {
-          await controller.init();
-          await controller.start();
-          controller.enable();
+          await startRuntime();
         }
       } else {
         log(`❌ ${result.error}`);
       }
     };
 
-    // Make menu draggable
     let isDragging = false;
     let offset = { x: 0, y: 0 };
 
@@ -105,12 +171,12 @@
 
   function log(msg) {
     console.log(`[FingerPoint] ${msg}`);
-    if (logEl) {
-      const entry = document.createElement('div');
-      entry.textContent = `${new Date().toLocaleTimeString().split(' ')[0]} ${msg}`;
-      logEl.prepend(entry);
-      if (logEl.childNodes.length > 50) logEl.lastChild.remove();
-    }
+    if (!logEl) return;
+
+    const entry = document.createElement('div');
+    entry.textContent = `${new Date().toLocaleTimeString().split(' ')[0]} ${msg}`;
+    logEl.prepend(entry);
+    if (logEl.childNodes.length > 50) logEl.lastChild.remove();
   }
 
   function updateCursor(x, y) {
@@ -125,20 +191,20 @@
   function simulateClick(x, y) {
     const px = x * window.innerWidth;
     const py = y * window.innerHeight;
-    const el = elementFromPoint(px, py);
-    if (el) {
-      log(`🖱️ Clicking on: ${el.tagName}`);
-      const opts = {
-        bubbles: true,
-        cancelable: true,
-        view: window,
-        clientX: px,
-        clientY: py
-      };
-      el.dispatchEvent(new PointerEvent('pointerdown', opts));
-      el.dispatchEvent(new PointerEvent('pointerup', opts));
-      el.dispatchEvent(new MouseEvent('click', opts));
-    }
+    const el = document.elementFromPoint(px, py);
+    if (!el) return;
+
+    log(`🖱️ Clicking on: ${el.tagName}`);
+    const opts = {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      clientX: px,
+      clientY: py
+    };
+    el.dispatchEvent(new PointerEvent('pointerdown', opts));
+    el.dispatchEvent(new PointerEvent('pointerup', opts));
+    el.dispatchEvent(new MouseEvent('click', opts));
   }
 
   function handleScroll(dy) {
@@ -170,84 +236,110 @@
     }
   };
 
+  async function ensureControllerInitialized() {
+    if (controllerInitialized) return;
+    await controller.init();
+    controllerInitialized = true;
+  }
+
+  async function startRuntime() {
+    if (!state.enabled) return;
+    if (document.visibilityState !== 'visible') return;
+
+    try {
+      await ensureControllerInitialized();
+      await controller.refreshPermissionState();
+
+      if (controller.getPermissionState() !== 'granted') {
+        if (cameraBannerEl) cameraBannerEl.style.display = 'flex';
+
+        const error = 'Camera permission required';
+        log(`❌ ${error}`);
+        state.enabled = false;
+        chrome.runtime.sendMessage({ action: 'cameraError', error });
+        return;
+      }
+
+      await controller.start();
+      controller.enable();
+
+      if (cursorEl) cursorEl.style.display = 'block';
+      if (logEl) logEl.style.display = state.debug ? 'block' : 'none';
+      if (cameraBannerEl) cameraBannerEl.style.display = 'none';
+
+      log('🟢 Control Enabled');
+      chrome.runtime.sendMessage({ action: 'cameraConnected' });
+    } catch (err) {
+      console.error('❌ Failed to start gesture control:', err);
+      log(`❌ ${err.message}`);
+      state.enabled = false;
+      chrome.runtime.sendMessage({ action: 'cameraError', error: err.message });
+    }
+  }
+
+  function stopRuntime() {
+    controller.disable();
+    controller.stop();
+
+    if (cursorEl) cursorEl.style.display = 'none';
+    if (logEl) logEl.style.display = 'none';
+    if (menuEl) menuEl.style.display = 'none';
+    if (cameraBannerEl) cameraBannerEl.style.display = 'none';
+
+    log('🔴 Control Disabled');
+  }
+
   async function toggle(enabled) {
     state.enabled = enabled;
+
     if (enabled) {
-      try {
-        // Request camera permission before starting
-        log('🎥 Requesting camera permission...');
-        await controller.init();
-        
-        const permResult = await controller.requestCameraPermission();
-        
-        if (!permResult.success) {
-          // Show camera banner for user action
-          if (cameraBannerEl) {
-            cameraBannerEl.style.display = 'flex';
-          }
-          log(`❌ ${permResult.error}`);
-          state.enabled = false;
-          
-          // Update popup status
-          chrome.runtime.sendMessage({ action: 'cameraError', error: permResult.error });
-          return;
-        }
-        
-        await controller.start();
-        controller.enable();
-        cursorEl.style.display = 'block';
-        if (state.debug) logEl.style.display = 'block';
-        log('🟢 Control Enabled');
-        
-        // Notify popup that camera is connected
-        chrome.runtime.sendMessage({ action: 'cameraConnected' });
-      } catch (err) {
-        console.error('❌ Failed to start gesture control:', err);
-        log(`❌ ${err.message}`);
-        state.enabled = false;
-        chrome.runtime.sendMessage({ action: 'cameraError', error: err.message });
-      }
+      log('🎥 Starting gesture control...');
+      await startRuntime();
+      return;
+    }
+
+    stopRuntime();
+  }
+
+  chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (request.action === 'toggle') {
+      toggle(request.enabled);
+      sendResponse({ status: 'ok' });
+      return;
+    }
+
+    if (request.action === 'getStatus') {
+      sendResponse({
+        enabled: state.enabled,
+        cameraStatus: controller.getPermissionState()
+      });
+    }
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (!state.enabled) return;
+
+    if (document.visibilityState === 'visible') {
+      startRuntime();
     } else {
       controller.disable();
       controller.stop();
       if (cursorEl) cursorEl.style.display = 'none';
       if (logEl) logEl.style.display = 'none';
-      if (menuEl) menuEl.style.display = 'none';
-      if (cameraBannerEl) cameraBannerEl.style.display = 'none';
-      log('🔴 Control Disabled');
-    }
-  }
-
-  // Messaging from popup
-  chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    if (request.action === 'toggle') {
-      toggle(request.enabled);
-      sendResponse({ status: 'ok' });
-    } else if (request.action === 'getStatus') {
-      sendResponse({ 
-        enabled: state.enabled,
-        cameraStatus: controller.getPermissionState()
-      });
-    } else if (request.action === 'requestCamera') {
-      controller.requestCameraPermission().then(result => {
-        sendResponse(result);
-      });
-      return true; // Keep channel open for async response
     }
   });
 
-  // Handle page unload
   window.addEventListener('unload', () => {
     controller.stop();
   });
 
-  // Init
+  await waitForBody();
   initUI();
-  
-  // Load initial state
+
   chrome.storage.sync.get(['enabled'], (result) => {
     if (result.enabled) {
-      toggle(true);
+      state.enabled = true;
+      startRuntime();
     }
   });
 

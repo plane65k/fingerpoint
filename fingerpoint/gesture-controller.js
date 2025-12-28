@@ -23,13 +23,29 @@ export class GestureController {
     this.isScrolling = false;
   }
 
+  async refreshPermissionState() {
+    const result = await new Promise((resolve) => {
+      chrome.storage.local.get(['cameraPermission'], resolve);
+    });
+
+    if (result.cameraPermission) {
+      this.permissionState = result.cameraPermission;
+    }
+
+    return this.permissionState;
+  }
+
   async requestCameraPermission() {
     console.log('🎥 Camera request started');
     this.permissionState = 'prompt';
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 640, height: 480 }
+        video: {
+          width: { ideal: 640 },
+          height: { ideal: 480 }
+        },
+        audio: false
       });
       
       this.cameraStream = stream;
@@ -93,33 +109,29 @@ export class GestureController {
     this.video.playsInline = true;
     document.body.appendChild(this.video);
 
-    // Load saved permission state
-    await new Promise((resolve) => {
-      chrome.storage.local.get(['cameraPermission'], (result) => {
-        if (result.cameraPermission) {
-          this.permissionState = result.cameraPermission;
-        }
-        resolve();
-      });
-    });
+    await this.refreshPermissionState();
   }
 
   async start() {
     if (this.isRunning) return;
 
-    // Check if we have permission
+    await this.refreshPermissionState();
+
+    // Only start the camera if permission was already granted.
+    // Permission prompts must be triggered by an explicit user action (e.g. popup/banner button).
     if (this.permissionState !== 'granted') {
-      const permResult = await this.requestCameraPermission();
-      if (!permResult.success) {
-        throw new Error(permResult.error);
-      }
+      throw new Error('Camera permission required');
     }
 
     try {
       // Use stored stream or get new one
       if (!this.cameraStream) {
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: 640, height: 480 }
+          video: {
+            width: { ideal: 640 },
+            height: { ideal: 480 }
+          },
+          audio: false
         });
         this.cameraStream = stream;
       }
