@@ -91,3 +91,40 @@
   z-index: 10003;
   display: none;
 }
+
+/* Camera Permission Banner */
+#fp-camera-banner {
+  position: fixed;
+  top: 50px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #333;
+  color: white;
+  padding: 12px 20px;
+  border-radius: 8px;
+  display: none;
+  align-items: center;
+  gap: 15px;
+  z-index: 10007;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+#fp-camera-banner span {
+  font-size: 14px;
+}
+
+#fp-camera-banner button {
+  padding: 8px 16px;
+  background: #007bff;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.2s;
+}
+
+#fp-camera-banner button:hover {
+  background: #0056b3;
+}

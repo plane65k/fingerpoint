@@ -3,7 +3,7 @@
 <head>
   <style>
     body {
-      width: 250px;
+      width: 280px;
       padding: 15px;
       font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
       background-color: #111;
@@ -13,7 +13,7 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 15px;
+      gap: 12px;
     }
     h1 {
       margin: 0;
@@ -22,6 +22,51 @@
     }
     .status {
       font-size: 0.9rem;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .status-indicator {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    .status-connected {
+      background-color: #28a745;
+      box-shadow: 0 0 8px #28a745;
+    }
+    .status-disconnected {
+      background-color: #dc3545;
+      box-shadow: 0 0 8px #dc3545;
+    }
+    .status-pending {
+      background-color: #ffc107;
+      box-shadow: 0 0 8px #ffc107;
+    }
+    .status-denied {
+      background-color: #6c757d;
+      box-shadow: 0 0 8px #6c757d;
+    }
+    .camera-status {
+      font-size: 0.85rem;
+      padding: 8px 12px;
+      border-radius: 5px;
+      background-color: #222;
+      width: 100%;
+      text-align: left;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .camera-status.connected {
+      border-left: 3px solid #28a745;
+    }
+    .camera-status.denied {
+      border-left: 3px solid #dc3545;
+    }
+    .camera-status.pending {
+      border-left: 3px solid #ffc107;
     }
     .toggle-btn {
       width: 100%;
@@ -40,6 +85,35 @@
       background-color: #dc3545;
       color: white;
     }
+    .btn-disabled {
+      background-color: #6c757d;
+      color: white;
+      cursor: not-allowed;
+    }
+    .permission-btn {
+      width: 100%;
+      padding: 8px;
+      margin-top: 5px;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      background-color: #007bff;
+      color: white;
+      font-size: 0.85rem;
+      transition: background 0.3s;
+    }
+    .permission-btn:hover {
+      background-color: #0056b3;
+    }
+    .error-message {
+      font-size: 0.8rem;
+      color: #dc3545;
+      background: rgba(220, 53, 69, 0.1);
+      padding: 8px;
+      border-radius: 5px;
+      width: 100%;
+      text-align: left;
+    }
     .instructions {
       font-size: 0.8rem;
       color: #aaa;
@@ -55,8 +129,21 @@
 <body>
   <div class="container">
     <h1>FingerPoint</h1>
-    <div class="status">Status: <span id="status-text">Disabled</span></div>
+    
+    <div id="camera-status" class="camera-status pending">
+      <span class="status-indicator status-pending"></span>
+      <span id="camera-status-text">Camera: Checking...</span>
+    </div>
+    
+    <div class="status">
+      <span class="status-indicator" id="status-indicator"></span>
+      <span>Status: <span id="status-text">Disabled</span></span>
+    </div>
+    
     <button id="toggle-btn" class="toggle-btn btn-off">Enable Control</button>
+    
+    <div id="error-container"></div>
+    
     <div class="instructions">
       <strong>Gestures:</strong>
       <ul>
